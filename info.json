@@ -1,14 +1,14 @@
 {
     "name": "AdditionalPasteSettings_CoreNest",
-    "version": "2.0.15",
+    "version": "2.1.0",
     "title": "Additional Paste Settings (Extended)",
-    "factorio_version": "2.0",
+    "factorio_version": "2.1",
     "author": "CoreNest ; based on Billbo99; Original author: Shirkit",
     "description": "Fork maintained separately from the original Additional Paste Settings. Adds additional paste settings for the game (shift+right click -> shift+left click), such as merging/combining requests at logistic chests, setting a fixed request multiplier, allow you to modify the 30 seconds vanilla behaviour and allow pasting from assemblers into inserters to set a condition on them.",
     "dependencies": [
-        "base >= 2.0.22",
+        "base >= 2.1.0",
         "!AdditionalPasteSettings",
-        "?Babelfish >= 2.0.0",
+        "?Babelfish >= 2.1.0",
         "!attach-notes"
     ]
 }

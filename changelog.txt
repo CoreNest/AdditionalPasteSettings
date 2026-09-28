@@ -1,5 +1,22 @@
 ---------------------------------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------
+Version: 2.1.0
+Date: 2026.09.28
+  Changes:
+    - Updated for Factorio 2.1.20. Requires base >= 2.1.0.
+---------------------------------------------------------------------------------------------------
+Version: 2.0.17
+Date: 2026.04.17
+  Changes:
+    - Assembler -> inserter: when the source assembler has quality modules (or receives quality effects from beacons), the inserter filter is now set to "any quality" (>= normal) instead of being locked to the recipe's base quality. New per-user setting lets you opt out.
+  Bugfixes:
+    - Assembler -> inserter: repeated pastes (to bump the logistic limit) no longer replace the whitelist filters with a single ingredient. Every paste now re-applies the full product+ingredient whitelist.
+---------------------------------------------------------------------------------------------------
+Version: 2.0.16
+Date: 2026.04.07
+  Bugfixes:
+    - Ghost assembler -> ghost inserter smart filter now correctly overrides vanilla ingredient filters while keeping logistic limit behavior.
+---------------------------------------------------------------------------------------------------
 Version: 2.0.15
 Date: 2026.04.07
   Bugfixes:

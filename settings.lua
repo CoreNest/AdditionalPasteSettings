@@ -70,6 +70,13 @@ data:extend(
             order = "cbc"
         },
         {
+            type = "bool-setting",
+            name = "additional-paste-settings-options-inserter-filter-any-quality-with-quality-modules",
+            setting_type = "runtime-per-user",
+            default_value = true,
+            order = "cbd"
+        },
+        {
             type = "string-setting",
             name = "additional-paste-settings-options-transport_belt-multiplier-type",
             setting_type = "runtime-per-user",

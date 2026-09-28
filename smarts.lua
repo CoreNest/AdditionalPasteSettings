@@ -545,6 +545,34 @@ local function entity_effective_prototype(ent)
     return ent.prototype
 end
 
+--- True if the entity has a positive quality effect (from its own modules or beacons),
+--- meaning its outputs can roll above the recipe's base quality.
+---@param ent LuaEntity
+---@return boolean
+local function entity_has_quality_effect(ent)
+    if not ent or not ent.valid then return false end
+
+    local ok_eff, effects = pcall(function() return ent.effects end)
+    if ok_eff and effects and effects.quality and effects.quality > 0 then
+        return true
+    end
+
+    local ok_inv, inv = pcall(function() return ent.get_module_inventory() end)
+    if ok_inv and inv then
+        for i = 1, #inv do
+            local stack = inv[i]
+            if stack and stack.valid_for_read then
+                local proto = prototypes.item[stack.name]
+                if proto and proto.module_effects and proto.module_effects.quality and proto.module_effects.quality > 0 then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
 --- Read recipe from real assembler or assembler ghost.
 ---@param ent LuaEntity
 ---@return LuaRecipe?|LuaRecipePrototype?, LuaQualityPrototype?
@@ -1016,16 +1044,24 @@ end
 ---@param recipe LuaRecipe|LuaRecipePrototype
 ---@param quality LuaQualityPrototype?
 ---@param mode string
+---@param any_quality boolean? when true, emit "≥ normal" filters (match any quality)
 ---@return ItemCycle[]
-local function build_inserter_filter_cycle_from_recipe(recipe, quality, mode)
+local function build_inserter_filter_cycle_from_recipe(recipe, quality, mode, any_quality)
     local cycle = {}
     if not recipe then return cycle end
-    local qname = (quality and quality.name) or "normal"
+    local qname
+    local comparator
+    if any_quality then
+        qname = "normal"
+        comparator = "≥"
+    else
+        qname = (quality and quality.name) or "normal"
+    end
 
     local function add_item_products()
         for _, v in pairs(recipe.products or {}) do
             if v.type ~= "fluid" and v.name and prototypes.item[v.name] then
-                table.insert(cycle, { name = v.name, type = "item", quality = qname })
+                table.insert(cycle, { name = v.name, type = "item", quality = qname, comparator = comparator })
             end
         end
     end
@@ -1033,7 +1069,7 @@ local function build_inserter_filter_cycle_from_recipe(recipe, quality, mode)
     local function add_item_ingredients()
         for _, v in pairs(recipe.ingredients or {}) do
             if v.type ~= "fluid" and v.name and prototypes.item[v.name] then
-                table.insert(cycle, { name = v.name, type = "item", quality = qname })
+                table.insert(cycle, { name = v.name, type = "item", quality = qname, comparator = comparator })
             end
         end
     end
@@ -1054,10 +1090,11 @@ end
 ---@param recipe LuaRecipe|LuaRecipePrototype
 ---@param quality LuaQualityPrototype?
 ---@param mode string
+---@param any_quality boolean?
 ---@return ItemCycle|nil
-local function pick_vanilla_inserter_filter_item(inserter, recipe, quality, mode)
+local function pick_vanilla_inserter_filter_item(inserter, recipe, quality, mode, any_quality)
     if not inserter or not inserter.valid or not recipe then return nil end
-    local cycle = build_inserter_filter_cycle_from_recipe(recipe, quality, mode)
+    local cycle = build_inserter_filter_cycle_from_recipe(recipe, quality, mode, any_quality)
     if #cycle == 0 then return nil end
     if mode ~= "additional-paste-settings-inserter-filter-mode-switch" then
         return cycle[1]
@@ -1194,15 +1231,22 @@ local function apply_all_inserter_filter_slots(inserter, items, player)
         inserter.set_filter(idx, nil)
     end
     local n = math.min(inserter.filter_slot_count, #items)
+    local any_quality_seen = false
     for idx = 1, n do
         local v = items[idx]
-        inserter.set_filter(idx, { name = v.name, quality = v.quality or "normal" })
+        local filter = { name = v.name, quality = v.quality or "normal" }
+        if v.comparator then
+            filter.comparator = v.comparator
+            any_quality_seen = true
+        end
+        inserter.set_filter(idx, filter)
     end
     if n > 0 then
         inserter.use_filters = true
     end
     if player and n > 0 then
-        player.create_local_flying_text({ text = "Filters " .. n .. "/" .. inserter.filter_slot_count, position = inserter.position, color = lib.colors.white })
+        local suffix = any_quality_seen and " (any quality)" or ""
+        player.create_local_flying_text({ text = "Filters " .. n .. "/" .. inserter.filter_slot_count .. suffix, position = inserter.position, color = lib.colors.white })
     end
 end
 
@@ -1223,11 +1267,14 @@ local function set_inserter_cycle_filter(inserter, player)
     for idx = 1, inserter.filter_slot_count do
         inserter.set_filter(idx, nil)
     end
-    inserter.set_filter(1, { name = item.name, quality = item.quality or "normal" })
+    local filter = { name = item.name, quality = item.quality or "normal" }
+    if item.comparator then filter.comparator = item.comparator end
+    inserter.set_filter(1, filter)
     entity.cycle_index = entity.cycle_index + 1
     if entity.cycle_index > #entity.cycle then entity.cycle_index = 1 end
 
     local msg = "Apply filter " .. "[img=item." .. item.name .. "]"
+    if item.comparator then msg = msg .. " (any quality)" end
     if player then player.create_local_flying_text({ text = msg, position = inserter.position, color = lib.colors.white }) end
 end
 
@@ -1351,22 +1398,24 @@ function Smarts.assembly_to_inserter(from, to, player, special)
             end
         end
 
-        -- Item filters: first paste fills all slots from recipe; same assembler+recipe then rotates slot 1 (like loader).
+        -- Re-apply the full whitelist every paste so repeated pastes (to bump the logistic limit)
+        -- don't let vanilla/smart_filters clobber the previous whitelist down to a single slot.
         local filter_mode = get_inserter_filter_mode(player)
-        local filter_cycle = build_inserter_filter_cycle_from_recipe(fromRecipe, quality, filter_mode)
+        local any_quality = settings.get_player_settings(player)["additional-paste-settings-options-inserter-filter-any-quality-with-quality-modules"].value
+            and entity_has_quality_effect(from)
+        local filter_cycle = build_inserter_filter_cycle_from_recipe(fromRecipe, quality, filter_mode, any_quality)
         if #filter_cycle > 0 then
             local quality_name = quality and quality.name or "normal"
-            local asm_key = tostring(from.unit_number) .. ":" .. fromRecipe.name .. ":" .. quality_name
+            local asm_key = tostring(from.unit_number)
+                .. ":" .. fromRecipe.name
+                .. ":" .. quality_name
+                .. ":" .. (any_quality and "anyQ" or "fixedQ")
             storage.entity_data[to.unit_number] = storage.entity_data[to.unit_number] or {}
             local entity = storage.entity_data[to.unit_number]
             entity.cycle = filter_cycle
-            if entity.assembly_paste_key == asm_key then
-                set_inserter_cycle_filter(to, player)
-            else
-                entity.cycle_index = 1
-                entity.assembly_paste_key = asm_key
-                apply_all_inserter_filter_slots(to, filter_cycle, player)
-            end
+            entity.cycle_index = 1
+            entity.assembly_paste_key = asm_key
+            apply_all_inserter_filter_slots(to, filter_cycle, player)
         end
     end
 end
@@ -1578,10 +1627,14 @@ function Smarts.on_vanilla_paste(event)
         if pickup_target and entity_action_type(pickup_target) == "assembling-machine" then
             local recipe, quality = get_entity_recipe_and_quality(pickup_target)
             local filter_mode = get_inserter_filter_mode(player)
-            local item = pick_vanilla_inserter_filter_item(inserter, recipe, quality, filter_mode)
+            local any_quality = settings.get_player_settings(player)["additional-paste-settings-options-inserter-filter-any-quality-with-quality-modules"].value
+                and entity_has_quality_effect(pickup_target)
+            local item = pick_vanilla_inserter_filter_item(inserter, recipe, quality, filter_mode, any_quality)
             if item then
                 for i = 1, inserter.filter_slot_count do inserter.set_filter(i, nil) end
-                inserter.set_filter(1, { name = item.name, quality = item.quality or "normal" })
+                local filter = { name = item.name, quality = item.quality or "normal" }
+                if item.comparator then filter.comparator = item.comparator end
+                inserter.set_filter(1, filter)
                 inserter.use_filters = true
             end
         end
